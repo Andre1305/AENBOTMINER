@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 # Funções auxiliares
 
 def get_md5_hash(text: str) -> str:
-    return hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+    return hashlib.md5(text.encode("utf-8")).hexdigest()[:12]
 
 
 def sanitize_product_name(name: str) -> str:
@@ -106,6 +106,27 @@ def init_db(db_path: str) -> sqlite3.Connection:
     )
 
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_prices_product_timestamp ON prices(product_id, timestamp DESC)")
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS scan_cycles (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_at TEXT,
+            finished_at TEXT,
+            status TEXT
+        )
+        """
+    )
+
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS bot_state (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
+
     cursor.execute("PRAGMA journal_mode=WAL")
     conn.commit()
     return conn
@@ -344,7 +365,8 @@ def send_telegram_message(message: str) -> bool:
 
 
 def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
-    product_id = get_md5_hash(sanitize_product_name(product["name"]))
+    unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(product['name'])}|{product.get('url', '')}"
+    product_id = get_md5_hash(unique_key)
     cursor = conn.cursor()
     now_iso = datetime.now(timezone.utc).isoformat()
 
@@ -424,19 +446,76 @@ def cleanup_old_prices(conn: sqlite3.Connection, days: int = 30) -> None:
 
 
 def run_scan_cycle(db_path: str) -> None:
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = []
-        for site in ["kabum", "pichau", "terabyte", "mercadolivre"]:
-            for product_type in ["processador", "placa-mae", "memoria", "ssd", "hd"]:
-                futures.append(executor.submit(process_site, site, product_type, db_path))
+    cycle_id = register_cycle_start(db_path)
+    cycle_failed = False
 
-        for future in as_completed(futures):
-            try:
-                future.result()
-            except Exception as e:
-                logger.exception(f"Erro em uma thread: {e}")
+    try:
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            futures = []
+            for site in ["kabum", "pichau", "terabyte", "mercadolivre"]:
+                for product_type in ["processador", "placa-mae", "memoria", "ssd", "hd"]:
+                    futures.append(executor.submit(process_site, site, product_type, db_path))
+
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as e:
+                    cycle_failed = True
+                    logger.exception(f"Erro em uma thread: {e}")
+    finally:
+        register_cycle_end(db_path, cycle_id, status="failed" if cycle_failed else "completed")
+
+def register_cycle_start(db_path: str) -> int:
+    conn = init_db(db_path)
+    try:
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT INTO scan_cycles (started_at, status) VALUES (?, ?)",
+            (datetime.now(timezone.utc).isoformat(), "running"),
+        )
+        conn.commit()
+        return int(cursor.lastrowid)
+    finally:
+        close_db(conn)
 
 
+def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
+    conn = init_db(db_path)
+    try:
+        conn.execute(
+            "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+        )
+        conn.commit()
+    finally:
+        close_db(conn)
+
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM bot_state WHERE key='startup_notified_at'"
+        ).fetchone()
+        if row:
+            return
+
+        message = (
+            "🤖 Bot de monitoramento iniciado com sucesso!\n"
+            f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+        )
+
+        if send_telegram_message(message):
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            logger.info("Mensagem de início enviada no Telegram.")
+        else:
+            logger.warning("Não foi possível enviar mensagem de início no Telegram.")
+    finally:
+        close_db(conn)
 
 def main() -> None:
     db_path = "pricebot.db"
@@ -446,6 +525,7 @@ def main() -> None:
     close_db(conn)
 
     logger.info("🚀 Iniciando monitoramento 24/7")
+    send_startup_notification_once(db_path)
 
     try:
         while True:
