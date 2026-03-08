@@ -1,9 +1,13 @@
 import re
+import logging
 from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_HEADERS = {
@@ -20,15 +24,15 @@ DEFAULT_HEADERS = {
 def direct_scrape_site(url: str) -> Optional[str]:
     try:
         response = requests.get(url, headers=DEFAULT_HEADERS, timeout=30)
-        print(f"[DEBUG] {url} -> status {response.status_code}")
+        logger.debug("%s -> status %s", url, response.status_code)
 
         if response.status_code == 200 and response.text:
             return response.text
 
-        print(f"[DEBUG] resposta vazia ou bloqueada para {url}")
+        logger.debug("resposta vazia ou bloqueada para %s", url)
         return None
     except Exception as e:
-        print(f"Erro ao acessar {url}: {e}")
+        logger.warning("Erro ao acessar %s: %s", url, e)
         return None
 
 
@@ -38,12 +42,17 @@ def extract_price_from_text(text: str) -> Optional[float]:
         return None
 
     cleaned = re.sub(r"[^\d,\.]", "", text)
-    match = re.search(r"(\d+(?:[\.,]\d+)?)", cleaned)
+    match = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:\.\d{2})?)", cleaned)
     if not match:
         return None
 
     try:
-        return float(match.group(1).replace(",", "."))
+        raw_price = match.group(1)
+        if "," in raw_price:
+            normalized = raw_price.replace(".", "").replace(",", ".")
+        else:
+            normalized = raw_price
+        return float(normalized)
     except ValueError:
         return None
 
