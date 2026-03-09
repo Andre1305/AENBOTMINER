@@ -346,6 +346,16 @@ def check_for_alert(conn: sqlite3.Connection, product_id: str, current_price: fl
 
     drop_ratio = (avg_price - current_price) / avg_price
 
+
+    if len(history_prices) < MIN_HISTORY_FOR_ALERT:
+        return False
+
+    avg_price = sum(p[0] for p in history_prices) / len(history_prices)
+    if avg_price <= 0:
+        return False
+
+    drop_ratio = (avg_price - current_price) / avg_price
+
     # BUG_DROP_ALERT aceita 0.10 ou 10 para 10%
     if drop_ratio < BUG_DROP_THRESHOLD:
         return False
@@ -403,6 +413,7 @@ def send_telegram_message(message: str) -> bool:
 def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
     stable_url = normalize_product_url(product.get("url", ""))
     unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(product['name'])}|{stable_url}"
+    unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(product['name'])}|{product.get('url', '')}"
     product_id = get_md5_hash(unique_key)
     cursor = conn.cursor()
     now_iso = datetime.now(timezone.utc).isoformat()
@@ -533,6 +544,82 @@ def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -
     finally:
         close_db(conn)
 
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM bot_state WHERE key='startup_notified_at'"
+        ).fetchone()
+        if row:
+            return
+
+        message = (
+            "🤖 Bot de monitoramento iniciado com sucesso!\n"
+            f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+        )
+
+        if send_telegram_message(message):
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            logger.info("Mensagem de início enviada no Telegram.")
+        else:
+            logger.warning("Não foi possível enviar mensagem de início no Telegram.")
+    finally:
+        close_db(conn)
+
+def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
+    conn = init_db(db_path)
+    try:
+        conn.execute(
+            "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+        )
+        conn.commit()
+    finally:
+        close_db(conn)
+
+
+def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
+    conn = init_db(db_path)
+    try:
+        conn.execute(
+            "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+        )
+        conn.commit()
+    finally:
+        close_db(conn)
+
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM bot_state WHERE key='startup_notified_at'"
+        ).fetchone()
+        if row:
+            return
+
+        message = (
+            "🤖 Bot de monitoramento iniciado com sucesso!\n"
+            f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+        )
+ 
+        if send_telegram_message(message):
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            logger.info("Mensagem de início enviada no Telegram.")
+        else:
+            logger.warning("Não foi possível enviar mensagem de início no Telegram.")
+    finally:
+        close_db(conn)
 
 def send_startup_notification_once(db_path: str) -> None:
     conn = init_db(db_path)
