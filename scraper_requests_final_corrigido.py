@@ -1,9 +1,13 @@
 import re
+import logging
 from typing import Dict, List, Optional
 from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
+
+
+logger = logging.getLogger(__name__)
 
 
 DEFAULT_HEADERS = {
@@ -20,15 +24,15 @@ DEFAULT_HEADERS = {
 def direct_scrape_site(url: str) -> Optional[str]:
     try:
         response = requests.get(url, headers=DEFAULT_HEADERS, timeout=30)
-        print(f"[DEBUG] {url} -> status {response.status_code}")
+        logger.debug("%s -> status %s", url, response.status_code)
 
         if response.status_code == 200 and response.text:
             return response.text
 
-        print(f"[DEBUG] resposta vazia ou bloqueada para {url}")
+        logger.debug("resposta vazia ou bloqueada para %s", url)
         return None
     except Exception as e:
-        print(f"Erro ao acessar {url}: {e}")
+        logger.warning("Erro ao acessar %s: %s", url, e)
         return None
 
 
@@ -38,12 +42,17 @@ def extract_price_from_text(text: str) -> Optional[float]:
         return None
 
     cleaned = re.sub(r"[^\d,\.]", "", text)
-    match = re.search(r"(\d+(?:[\.,]\d+)?)", cleaned)
+    match = re.search(r"(\d{1,3}(?:\.\d{3})*,\d{2}|\d+(?:\.\d{2})?)", cleaned)
     if not match:
         return None
 
     try:
-        return float(match.group(1).replace(",", "."))
+        raw_price = match.group(1)
+        if "," in raw_price:
+            normalized = raw_price.replace(".", "").replace(",", ".")
+        else:
+            normalized = raw_price
+        return float(normalized)
     except ValueError:
         return None
 
@@ -113,6 +122,83 @@ def extract_products_from_html(html: str, product_type: str, base_url: str = "")
     return unique_products
 
 
+
+
+
+def parse_woocommerce_minor_units(value: Optional[str], minor_unit: int = 2) -> Optional[float]:
+    if value is None:
+        return None
+
+    digits = re.sub(r"\D", "", str(value))
+    if not digits:
+        return None
+
+    try:
+        amount = int(digits)
+    except ValueError:
+        return None
+
+    return amount / (10 ** max(minor_unit, 0))
+
+
+def scrape_pichau_via_store_api(product_type: str) -> List[Dict]:
+    """Fallback dedicado para Pichau via WooCommerce Store API."""
+    query_map = {
+        "processador": "processador",
+        "placa-mae": "placa mae",
+        "memoria": "memoria",
+        "ssd": "ssd",
+        "hd": "hd",
+    }
+
+    search_term = query_map.get(product_type, product_type)
+    api_url = "https://pichau.com/wp-json/wc/store/v1/products"
+
+    try:
+        response = requests.get(
+            api_url,
+            headers=DEFAULT_HEADERS,
+            params={"search": search_term, "per_page": 30},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except Exception as e:
+        logger.warning("Falha no fallback da Store API da Pichau: %s", e)
+        return []
+
+    products: List[Dict] = []
+    for item in data if isinstance(data, list) else []:
+        name = item.get("name", "").strip()
+        url = item.get("permalink", "").strip()
+        prices = item.get("prices") or {}
+        minor_unit = int(prices.get("currency_minor_unit", 2) or 2)
+
+        price = parse_woocommerce_minor_units(prices.get("sale_price"), minor_unit)
+        if price is None:
+            price = parse_woocommerce_minor_units(prices.get("price"), minor_unit)
+        if price is None:
+            price = parse_woocommerce_minor_units(prices.get("regular_price"), minor_unit)
+
+        if not name or not url or price is None or price <= 0:
+            continue
+
+        products.append({
+            "name": name,
+            "url": url,
+            "price": price,
+            "product_type": product_type,
+        })
+
+    unique_products: List[Dict] = []
+    seen = set()
+    for product in products:
+        if product["url"] in seen:
+            continue
+        seen.add(product["url"])
+        unique_products.append(product)
+
+    return unique_products
 
 def scrape_product_page(url: str) -> Optional[Dict]:
     html = direct_scrape_site(url)
