@@ -191,8 +191,10 @@ def scrape_with_serp(query: str) -> List[Dict]:
 
 
 def scrape_with_requests(site: str, product_type: str) -> List[Dict]:
+    scrape_pichau_via_store_api = None
+
     try:
-        from scraper_requests_final_corrigido import direct_scrape_site, extract_products_from_html
+        from scraper_requests_final_corrigido import direct_scrape_site, extract_products_from_html, scrape_pichau_via_store_api
     except ImportError:
         try:
             from scraper_requests_final import direct_scrape_site, extract_products_from_html
@@ -212,11 +214,20 @@ def scrape_with_requests(site: str, product_type: str) -> List[Dict]:
 
     try:
         html_content = direct_scrape_site(root_url)
-        if not html_content:
-            logger.warning(f"HTML vazio ou bloqueado em {root_url}")
-            return []
+        if html_content:
+            products = extract_products_from_html(html_content, product_type, base_url=root_url)
+            if products:
+                return products
 
-        return extract_products_from_html(html_content, product_type, base_url=root_url)
+        logger.warning(f"HTML vazio, bloqueado ou sem produtos em {root_url}")
+
+        if site == "pichau" and scrape_pichau_via_store_api is not None:
+            fallback_products = scrape_pichau_via_store_api(product_type)
+            if fallback_products:
+                logger.info(f"Fallback Store API da Pichau retornou {len(fallback_products)} produtos")
+                return fallback_products
+
+        return []
     except Exception as e:
         logger.error(f"Erro no scraping requests ({site}/{product_type}): {e}")
         return []
@@ -325,6 +336,16 @@ def check_for_alert(conn: sqlite3.Connection, product_id: str, current_price: fl
         (product_id, MIN_HISTORY_FOR_ALERT),
     )
     history_prices = cursor.fetchall()
+
+    if len(history_prices) < MIN_HISTORY_FOR_ALERT:
+        return False
+
+    avg_price = sum(p[0] for p in history_prices) / len(history_prices)
+    if avg_price <= 0:
+        return False
+
+    drop_ratio = (avg_price - current_price) / avg_price
+
 
     if len(history_prices) < MIN_HISTORY_FOR_ALERT:
         return False
@@ -451,7 +472,8 @@ def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
 def process_site(site: str, product_type: str, db_path: str) -> None:
     conn = init_db(db_path)
     try:
-        query = f"{product_type} site:{site}.com.br"
+        domain = "pichau.com" if site == "pichau" else f"{site}.com.br"
+        query = f"{product_type} site:{domain}"
 
         products = scrape_with_serp(query)
         if not products:
@@ -510,6 +532,44 @@ def register_cycle_start(db_path: str) -> int:
     finally:
         close_db(conn)
 
+
+def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
+    conn = init_db(db_path)
+    try:
+        conn.execute(
+            "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+        )
+        conn.commit()
+    finally:
+        close_db(conn)
+
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM bot_state WHERE key='startup_notified_at'"
+        ).fetchone()
+        if row:
+            return
+
+        message = (
+            "🤖 Bot de monitoramento iniciado com sucesso!\n"
+            f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+        )
+
+        if send_telegram_message(message):
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            logger.info("Mensagem de início enviada no Telegram.")
+        else:
+            logger.warning("Não foi possível enviar mensagem de início no Telegram.")
+    finally:
+        close_db(conn)
 
 def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
     conn = init_db(db_path)
