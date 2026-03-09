@@ -5,6 +5,7 @@ import hashlib
 import logging
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import requests
@@ -17,8 +18,18 @@ TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = config("TELEGRAM_CHAT_ID", "")
 SCAN_INTERVAL_SECONDS = int(config("SCAN_INTERVAL_SECONDS", "1800"))
 MIN_HISTORY_FOR_ALERT = int(config("MIN_HISTORY_FOR_ALERT", "5"))
-BUG_DROP_ALERT = float(config("BUG_DROP_ALERT", "0.50"))
+BUG_DROP_ALERT = float(config("BUG_DROP_ALERT", "0.10"))
 ALERT_COOLDOWN_HOURS = int(config("ALERT_COOLDOWN_HOURS", "12"))
+
+
+def normalize_drop_threshold(value: float) -> float:
+    """Aceita 0.10 (10%) ou 10 (10%) e normaliza para fração [0, 1]."""
+    if value > 1:
+        value = value / 100
+    return min(max(value, 0.0), 1.0)
+
+
+BUG_DROP_THRESHOLD = normalize_drop_threshold(BUG_DROP_ALERT)
 
 
 def env_bool(name: str, default: bool = False) -> bool:
@@ -46,6 +57,14 @@ def get_md5_hash(text: str) -> str:
 
 def sanitize_product_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9]", "_", name.lower())
+
+
+def normalize_product_url(url: str) -> str:
+    if not url:
+        return ""
+    parts = urlsplit(url)
+    # remove querystring/fragmento para manter identidade estável entre ciclos
+    return urlunsplit((parts.scheme, parts.netloc, parts.path.rstrip("/"), "", ""))
 
 
 def extract_price_from_text(text: str) -> Optional[float]:
@@ -284,34 +303,40 @@ def get_average_price(conn: sqlite3.Connection, product_id: str, limit: int = MI
 
 
 
-def add_price_if_changed(conn: sqlite3.Connection, product_id: str, price: float) -> bool:
-    current_price = get_product_price(conn, product_id)
-    if current_price is None or abs(current_price - price) > 0.01:
-        cursor = conn.cursor()
-        cursor.execute(
-            "INSERT INTO prices (product_id, price, timestamp) VALUES (?, ?, ?)",
-            (product_id, price, datetime.now(timezone.utc).isoformat()),
-        )
-        conn.commit()
-        return True
-    return False
+def add_price_snapshot(conn: sqlite3.Connection, product_id: str, price: float) -> Optional[float]:
+    previous_price = get_product_price(conn, product_id)
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO prices (product_id, price, timestamp) VALUES (?, ?, ?)",
+        (product_id, price, datetime.now(timezone.utc).isoformat()),
+    )
+    conn.commit()
+    return previous_price
 
 
 
 def check_for_alert(conn: sqlite3.Connection, product_id: str, current_price: float) -> bool:
     cursor = conn.cursor()
+
+    # Usa histórico ANTERIOR ao preço atual (OFFSET 1),
+    # evitando diluir a média com o próprio preço de promoção.
     cursor.execute(
-        "SELECT price FROM prices WHERE product_id=? ORDER BY timestamp DESC LIMIT ?",
+        "SELECT price FROM prices WHERE product_id=? ORDER BY timestamp DESC LIMIT ? OFFSET 1",
         (product_id, MIN_HISTORY_FOR_ALERT),
     )
-    prices = cursor.fetchall()
+    history_prices = cursor.fetchall()
 
-    if len(prices) < MIN_HISTORY_FOR_ALERT:
+    if len(history_prices) < MIN_HISTORY_FOR_ALERT:
         return False
 
-    avg_price = sum(p[0] for p in prices) / len(prices)
+    avg_price = sum(p[0] for p in history_prices) / len(history_prices)
+    if avg_price <= 0:
+        return False
 
-    if current_price >= avg_price * BUG_DROP_ALERT:
+    drop_ratio = (avg_price - current_price) / avg_price
+
+    # BUG_DROP_ALERT aceita 0.10 ou 10 para 10%
+    if drop_ratio < BUG_DROP_THRESHOLD:
         return False
 
     cursor.execute(
@@ -365,6 +390,8 @@ def send_telegram_message(message: str) -> bool:
 
 
 def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
+    stable_url = normalize_product_url(product.get("url", ""))
+    unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(product['name'])}|{stable_url}"
     unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(product['name'])}|{product.get('url', '')}"
     product_id = get_md5_hash(unique_key)
     cursor = conn.cursor()
@@ -379,7 +406,7 @@ def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
             INSERT INTO products (product_id, site, name, url, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (product_id, product["site"], product["name"], product["url"], now_iso, now_iso),
+            (product_id, product["site"], product["name"], stable_url or product.get("url", ""), now_iso, now_iso),
         )
     else:
         cursor.execute(
@@ -388,7 +415,12 @@ def process_product(conn: sqlite3.Connection, product: Dict[str, str]) -> None:
         )
     conn.commit()
 
-    if not add_price_if_changed(conn, product_id, product["price"]):
+    previous_price = add_price_snapshot(conn, product_id, product["price"])
+
+    # Só avalia alerta quando houver queda de fato contra o preço imediatamente anterior.
+    if previous_price is None:
+        return
+    if product["price"] >= previous_price or abs(product["price"] - previous_price) <= 0.01:
         return
 
     if not check_for_alert(conn, product_id, product["price"]):
@@ -490,6 +522,44 @@ def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -
     finally:
         close_db(conn)
 
+
+def register_cycle_end(db_path: str, cycle_id: int, status: str = "completed") -> None:
+    conn = init_db(db_path)
+    try:
+        conn.execute(
+            "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+            (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+        )
+        conn.commit()
+    finally:
+        close_db(conn)
+
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = init_db(db_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM bot_state WHERE key='startup_notified_at'"
+        ).fetchone()
+        if row:
+            return
+
+        message = (
+            "🤖 Bot de monitoramento iniciado com sucesso!\n"
+            f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+        )
+ 
+        if send_telegram_message(message):
+            conn.execute(
+                "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+                ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+            )
+            conn.commit()
+            logger.info("Mensagem de início enviada no Telegram.")
+        else:
+            logger.warning("Não foi possível enviar mensagem de início no Telegram.")
+    finally:
+        close_db(conn)
 
 def send_startup_notification_once(db_path: str) -> None:
     conn = init_db(db_path)
