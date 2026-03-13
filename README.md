@@ -11,6 +11,7 @@ Bot de monitoramento de preços 24/7 para detectar possíveis **bugs de preço**
   2. **Histórico no banco SQLite** (queda forte comparada à média anterior).
 - Envia mensagem no Telegram assim que encontra um bug (não espera o ciclo terminar).
 - Envia notificação de “bot iniciado” apenas na primeira execução.
+- Alguns sites podem bloquear scraping por anti-bot em determinados horários/IPs; nesses casos o bot registra aviso e continua nos demais sites.
 
 ## Configuração (.env)
 
