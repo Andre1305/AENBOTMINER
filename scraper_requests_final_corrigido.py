@@ -203,14 +203,15 @@ def parse_woocommerce_minor_units(value: Optional[str], minor_unit: int = 2) -> 
     if value is None:
         return None
 
-    digits = re.sub(r"\D", "", str(value))
-    if not digits:
-        return None
 
-    try:
-        amount = int(digits)
-    except ValueError:
+def build_search_url(site: str, query: str, page: int) -> Optional[str]:
+    template = SEARCH_URLS.get(site)
+    if not template:
         return None
+    if site == "mercadolivre":
+        offset = (page - 1) * 50 + 1
+        return template.format(query=query, offset=offset)
+    return template.format(query=query, page=page)
 
     return amount / (10 ** max(minor_unit, 0))
 
@@ -328,5 +329,37 @@ def scrape_site_catalog(site: str, product_type: str, max_pages: int = 20) -> Li
 
     if not all_products:
         logger.warning("Nenhum produto coletado para %s/%s (possível bloqueio anti-bot)", site, product_type)
+
+def scrape_site_catalog(site: str, product_type: str, max_pages: int = 20) -> List[Dict]:
+    query = product_type.replace("-", " ")
+    all_products: List[Dict] = []
+    seen_urls = set()
+    empty_streak = 0
+
+    for page in range(1, max_pages + 1):
+        url = build_search_url(site, query, page)
+        if not url:
+            break
+
+        html = direct_scrape_site(url)
+        if not html:
+            empty_streak += 1
+            if empty_streak >= 3:
+                break
+            continue
+
+        page_products = extract_products_from_html(html, product_type, site=site, base_url=url)
+        if not page_products:
+            empty_streak += 1
+            if empty_streak >= 3:
+                break
+            continue
+
+        empty_streak = 0
+        for product in page_products:
+            if product["url"] in seen_urls:
+                continue
+            seen_urls.add(product["url"])
+            all_products.append(product)
 
     return all_products
