@@ -4,6 +4,7 @@ import re
 import sqlite3
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from contextvars import ContextVar
 from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 from urllib.parse import urlsplit, urlunsplit
@@ -13,6 +14,21 @@ from decouple import config
 
 from scraper_requests_final_corrigido import scrape_site_catalog
 
+
+class Config:
+    SERP_API_KEY: str = config("SERP_API_KEY", "caaec3c97fc463d1fa94c8bd641c9139ab61ed4693ea98ac188fe43c64213e41")
+    TELEGRAM_BOT_TOKEN: str = config("TELEGRAM_BOT_TOKEN", "7957463898:AAF7OAujnKjeRxYrY6eY4sH6X_X2zq2-Nzw")
+    TELEGRAM_CHAT_ID: str = config("TELEGRAM_CHAT_ID", "6834775938")
+    SCAN_INTERVAL_SECONDS: int = int(config("SCAN_INTERVAL_SECONDS", "600"))
+    MIN_HISTORY_FOR_ALERT: int = int(config("MIN_HISTORY_FOR_ALERT", "5"))
+    BUG_DROP_ALERT: float = float(config("BUG_DROP_ALERT", "0.50"))
+    ALERT_COOLDOWN_HOURS: int = int(config("ALERT_COOLDOWN_HOURS", "12"))
+    MAX_PAGES_PER_SITE: int = int(config("MAX_PAGES_PER_SITE", "30"))
+    SKIP_SERP_API: bool = True
+
+
+SITES = ["kabum", "pichau", "terabyte", "mercadolivre"]
+TYPES = ["processador", "placa-mae", "memoria", "ssd", "hd"]
 # Configurações
 SERP_API_KEY = config("SERP_API_KEY", "caaec3c97fc463d1fa94c8bd641c9139ab61ed4693ea98ac188fe43c64213e41")
 TELEGRAM_BOT_TOKEN = config("TELEGRAM_BOT_TOKEN", "7957463898:AAF7OAujnKjeRxYrY6eY4sH6X_X2zq2-Nzw")
@@ -33,6 +49,16 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+db_conn: ContextVar[sqlite3.Connection] = ContextVar("db_conn")
+
+
+def normalize_drop_threshold(value: float) -> float:
+    if value > 1:
+        value = value / 100
+    return min(max(value, 0.0), 1.0)
+
+
+BUG_DROP_THRESHOLD = normalize_drop_threshold(Config.BUG_DROP_ALERT)
 
 def normalize_drop_threshold(value: float) -> float:
     if value > 1:
@@ -61,6 +87,10 @@ def normalize_product_url(url: str) -> str:
 def init_db(db_path: str) -> sqlite3.Connection:
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA cache_size=-50000")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA temp_store=memory")
+
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS products (
@@ -99,6 +129,15 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS pending_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            message TEXT,
+            created TEXT
+        )
+        """
+    )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_product_timestamp ON prices(product_id, timestamp DESC)")
     conn.execute(
         """
@@ -118,10 +157,19 @@ def init_db(db_path: str) -> sqlite3.Connection:
         )
         """
     )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_prices_product_timestamp ON prices(product_id, timestamp DESC)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_alerts_product_ts ON alerts(product_id, timestamp DESC)")
     conn.commit()
     return conn
 
 
+def get_conn(db_path: str) -> sqlite3.Connection:
+    try:
+        return db_conn.get()
+    except LookupError:
+        conn = init_db(db_path)
+        db_conn.set(conn)
+        return conn
 def close_db(conn: Optional[sqlite3.Connection]) -> None:
     if conn:
         conn.close()
@@ -141,6 +189,88 @@ def get_price_history(conn: sqlite3.Connection, product_id: str, limit: int) -> 
         (product_id, limit),
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def can_send_alert(conn: sqlite3.Connection, product_id: str) -> bool:
+    row = conn.execute(
+        "SELECT timestamp FROM alerts WHERE product_id=? ORDER BY timestamp DESC LIMIT 1",
+        (product_id,),
+    ).fetchone()
+    if not row:
+        return True
+    elapsed = datetime.now(timezone.utc) - datetime.fromisoformat(row[0])
+    return elapsed.total_seconds() > Config.ALERT_COOLDOWN_HOURS * 3600
+
+
+def queue_pending_message(conn: sqlite3.Connection, message: str) -> None:
+    now_iso = datetime.now(timezone.utc).isoformat()
+    conn.execute("INSERT INTO pending_messages(message, created) VALUES(?, ?)", (message, now_iso))
+
+
+def send_telegram_message(message: str, conn: Optional[sqlite3.Connection] = None, queue_on_fail: bool = True) -> bool:
+    if not Config.TELEGRAM_BOT_TOKEN or not Config.TELEGRAM_CHAT_ID:
+        if conn and queue_on_fail:
+            queue_pending_message(conn, message)
+            conn.commit()
+        return False
+
+    try:
+        response = requests.post(
+            f"https://api.telegram.org/bot{Config.TELEGRAM_BOT_TOKEN}/sendMessage",
+            json={"chat_id": Config.TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"},
+            timeout=30,
+        )
+        ok = response.status_code == 200
+        if not ok and conn and queue_on_fail:
+            queue_pending_message(conn, message)
+            conn.commit()
+        return ok
+    except Exception as exc:
+        logger.error("Erro ao enviar Telegram: %s", exc)
+        if conn and queue_on_fail:
+            queue_pending_message(conn, message)
+            conn.commit()
+        return False
+
+
+def flush_pending_messages(conn: sqlite3.Connection, batch_size: int = 50) -> None:
+    rows = conn.execute(
+        "SELECT id, message FROM pending_messages ORDER BY id ASC LIMIT ?",
+        (batch_size,),
+    ).fetchall()
+    if not rows:
+        return
+
+    sent_ids: List[tuple[int]] = []
+    for msg_id, message in rows:
+        if send_telegram_message(message, conn=conn, queue_on_fail=False):
+            sent_ids.append((msg_id,))
+
+    if sent_ids:
+        conn.executemany("DELETE FROM pending_messages WHERE id=?", sent_ids)
+        conn.commit()
+
+
+def send_alert_message(
+    conn: sqlite3.Connection,
+    product: Dict[str, object],
+    reference_price: float,
+    current_price: float,
+    reason_label: str,
+) -> None:
+    drop_pct = ((reference_price - current_price) / reference_price) * 100 if reference_price > 0 else 0
+    message = (
+        "🚨 BUG DE PREÇO DETECTADO!\n\n"
+        f"Site: {product['site']}\n"
+        f"Produto: {product['name']}\n"
+        f"Preço atual: R$ {current_price:.2f}\n"
+        f"Preço de referência: R$ {reference_price:.2f}\n"
+        f"Queda: {drop_pct:.1f}%\n"
+        f"Critério: {reason_label}\n"
+        f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}"
+    )
+    if product.get("url"):
+        message += f"\n🔗 <a href='{product['url']}'>Link do produto</a>"
 
 
 def can_send_alert(conn: sqlite3.Connection, product_id: str) -> bool:
@@ -180,12 +310,15 @@ def send_telegram_message(message: str) -> bool:
         logger.error("Erro ao enviar Telegram: %s", exc)
         return False
 
+    send_telegram_message(message, conn=conn, queue_on_fail=True)
+
 
 def process_product(conn: sqlite3.Connection, product: Dict[str, object]) -> None:
     stable_url = normalize_product_url(str(product.get("url", "")))
     unique_key = f"{product.get('site', 'unknown')}|{sanitize_product_name(str(product.get('name', '')))}|{stable_url}"
     product_id = get_md5_hash(unique_key)
     now_iso = datetime.now(timezone.utc).isoformat()
+    current_price = float(product["price"])
 
     existing = conn.execute("SELECT 1 FROM products WHERE product_id=?", (product_id,)).fetchone()
     if not existing:
@@ -195,6 +328,16 @@ def process_product(conn: sqlite3.Connection, product: Dict[str, object]) -> Non
         )
     else:
         conn.execute("UPDATE products SET updated_at=? WHERE product_id=?", (now_iso, product_id))
+
+    conn.execute(
+        "INSERT INTO prices (product_id, price, timestamp) VALUES (?, ?, ?)",
+        (product_id, current_price, now_iso),
+    )
+
+    if not can_send_alert(conn, product_id):
+        conn.commit()
+        return
+
     conn.commit()
 
     current_price = float(product["price"])
@@ -208,6 +351,47 @@ def process_product(conn: sqlite3.Connection, product: Dict[str, object]) -> Non
     if isinstance(old_site_price, (int, float)) and old_site_price > current_price:
         drop_ratio = (old_site_price - current_price) / old_site_price
         if drop_ratio >= BUG_DROP_THRESHOLD:
+            conn.execute(
+                """
+                INSERT INTO alerts (product_id, old_price, new_price, percentage_drop, reason, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    product_id,
+                    float(old_site_price),
+                    current_price,
+                    drop_ratio * 100,
+                    "desconto_no_site",
+                    now_iso,
+                ),
+            )
+            conn.commit()
+            send_alert_message(conn, product, float(old_site_price), current_price, "Preço anterior no próprio site")
+            return
+
+    history = get_price_history(conn, product_id, Config.MIN_HISTORY_FOR_ALERT + 1)
+    historical_only = history[1:]
+    if len(historical_only) < Config.MIN_HISTORY_FOR_ALERT:
+        conn.commit()
+        return
+
+    avg_price = sum(historical_only) / len(historical_only)
+    if avg_price <= 0:
+        conn.commit()
+        return
+
+    drop_ratio = (avg_price - current_price) / avg_price
+    if drop_ratio >= BUG_DROP_THRESHOLD:
+        conn.execute(
+            """
+            INSERT INTO alerts (product_id, old_price, new_price, percentage_drop, reason, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (product_id, avg_price, current_price, drop_ratio * 100, "historico", now_iso),
+        )
+        conn.commit()
+        send_alert_message(conn, product, avg_price, current_price, "Média histórica")
+        return
             register_alert(conn, product_id, float(old_site_price), current_price, "desconto_no_site")
             send_alert_message(product, float(old_site_price), current_price, "Preço anterior no próprio site")
             return
@@ -244,10 +428,12 @@ def send_alert_message(product: Dict[str, object], reference_price: float, curre
         message += f"\n🔗 <a href='{product['url']}'>Link do produto</a>"
     send_telegram_message(message)
 
+    conn.commit()
 
 def process_site(site: str, product_type: str, db_path: str) -> None:
-    conn = init_db(db_path)
+    conn = get_conn(db_path)
     try:
+        products = scrape_site_catalog(site=site, product_type=product_type, max_pages=Config.MAX_PAGES_PER_SITE)
         products = scrape_site_catalog(site=site, product_type=product_type, max_pages=MAX_PAGES_PER_SITE)
         logger.info("%s/%s -> %s produtos", site, product_type, len(products))
         for product in products:
@@ -255,6 +441,52 @@ def process_site(site: str, product_type: str, db_path: str) -> None:
             process_product(conn, product)
     except Exception as exc:
         logger.exception("Erro processando %s/%s: %s", site, product_type, exc)
+
+
+def register_cycle_start(db_path: str) -> int:
+    conn = get_conn(db_path)
+    cur = conn.execute(
+        "INSERT INTO scan_cycles (started_at, status) VALUES (?, ?)",
+        (datetime.now(timezone.utc).isoformat(), "running"),
+    )
+    conn.commit()
+    return int(cur.lastrowid)
+
+
+def register_cycle_end(db_path: str, cycle_id: int, status: str) -> None:
+    conn = get_conn(db_path)
+    conn.execute(
+        "UPDATE scan_cycles SET finished_at=?, status=? WHERE id=?",
+        (datetime.now(timezone.utc).isoformat(), status, cycle_id),
+    )
+    conn.commit()
+
+
+def cleanup_old_prices(conn: sqlite3.Connection, days: int = 30) -> None:
+    cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    conn.execute("DELETE FROM prices WHERE timestamp < ?", (cutoff,))
+    conn.commit()
+
+
+def send_startup_notification_once(db_path: str) -> None:
+    conn = get_conn(db_path)
+    exists = conn.execute("SELECT value FROM bot_state WHERE key='startup_notified_at'").fetchone()
+    if exists:
+        return
+
+    if send_telegram_message(
+        "🤖 Bot iniciado com sucesso!\n"
+        f"Hora: {datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')}\n"
+        "Modo: monitoramento 24/7",
+        conn=conn,
+        queue_on_fail=True,
+    ):
+        conn.execute(
+            "INSERT OR REPLACE INTO bot_state (key, value) VALUES (?, ?)",
+            ("startup_notified_at", datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+
     finally:
         close_db(conn)
 
@@ -289,10 +521,24 @@ def cleanup_old_prices(conn: sqlite3.Connection, days: int = 30) -> None:
     conn.execute("DELETE FROM prices WHERE timestamp < ?", (cutoff,))
     conn.commit()
 
+def run_scan_cycle(db_path: str) -> None:
+    conn = get_conn(db_path)
+    cycle_id = register_cycle_start(db_path)
+    cycle_failed = False
 
-def send_startup_notification_once(db_path: str) -> None:
-    conn = init_db(db_path)
+    max_workers = len(SITES) * len(TYPES) // 2 + 1
     try:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(process_site, site, product_type, db_path) for site in SITES for product_type in TYPES]
+            for future in as_completed(futures):
+                try:
+                    future.result()
+                except Exception as exc:
+                    cycle_failed = True
+                    logger.exception("Erro em thread: %s", exc)
+
+        cleanup_old_prices(conn)
+        flush_pending_messages(conn)
         exists = conn.execute("SELECT value FROM bot_state WHERE key='startup_notified_at'").fetchone()
         if exists:
             return
@@ -307,8 +553,12 @@ def send_startup_notification_once(db_path: str) -> None:
             )
             conn.commit()
     finally:
-        close_db(conn)
+        register_cycle_end(db_path, cycle_id, "failed" if cycle_failed else "completed")
 
+
+def main() -> None:
+    db_path = "pricebot.db"
+    get_conn(db_path)
 
 def run_scan_cycle(db_path: str) -> None:
     cycle_id = register_cycle_start(db_path)
@@ -335,6 +585,7 @@ def main() -> None:
     close_db(init_db(db_path))
     logger.info("🚀 Iniciando monitoramento 24/7")
     send_startup_notification_once(db_path)
+    flush_pending_messages(get_conn(db_path))
 
     while True:
         logger.info("=" * 60)
@@ -343,6 +594,8 @@ def main() -> None:
 
         run_scan_cycle(db_path)
 
+        logger.info("✅ Ciclo finalizado. Aguardando %s segundos...", Config.SCAN_INTERVAL_SECONDS)
+        time.sleep(Config.SCAN_INTERVAL_SECONDS)
         conn = init_db(db_path)
         try:
             cleanup_old_prices(conn)

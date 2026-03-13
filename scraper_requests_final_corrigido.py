@@ -104,6 +104,16 @@ def extract_products_from_json_ld(html: str, product_type: str) -> List[Dict]:
         except Exception:
             continue
 
+
+    for script in soup.select('script[type="application/ld+json"]'):
+        raw = script.string or script.get_text(strip=True)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+
         nodes = payload if isinstance(payload, list) else [payload]
         for node in nodes:
             if not isinstance(node, dict):
@@ -185,6 +195,10 @@ def extract_products_from_html(html: str, product_type: str, site: str, base_url
                 products.append(product)
         if products:
             break
+
+    if not products:
+        products = extract_products_from_json_ld(html, product_type)
+
 
     if not products:
         products = extract_products_from_json_ld(html, product_type)
@@ -319,6 +333,16 @@ def scrape_site_catalog(site: str, product_type: str, max_pages: int = 20) -> Li
             if empty_streak >= 3:
                 break
             continue
+
+        empty_streak = 0
+        for product in page_products:
+            if product["url"] in seen_urls:
+                continue
+            seen_urls.add(product["url"])
+            all_products.append(product)
+
+    if not all_products:
+        logger.warning("Nenhum produto coletado para %s/%s (possível bloqueio anti-bot)", site, product_type)
 
         empty_streak = 0
         for product in page_products:

@@ -16,6 +16,9 @@ Bot de monitoramento de preços 24/7 para detectar possíveis **bugs de preço**
 ## Configuração (.env)
 
 ```env
+SERP_API_KEY=caaec3c97fc463d1fa94c8bd641c9139ab61ed4693ea98ac188fe43c64213e41
+TELEGRAM_BOT_TOKEN=7957463898:AAF7OAujnKjeRxYrY6eY4sH6X_X2zq2-Nzw
+TELEGRAM_CHAT_ID=6834775938
 SERP_API_KEY=xxx-xxx
 TELEGRAM_BOT_TOKEN=xxx-xxx
 TELEGRAM_CHAT_ID=xxx-xxx
