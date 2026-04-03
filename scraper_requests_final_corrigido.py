@@ -6,6 +6,9 @@ import threading
 import time
 from typing import Dict, List, Optional
 from urllib.parse import quote_plus, urljoin, urlsplit
+import re
+from typing import Dict, List, Optional
+from urllib.parse import quote_plus, urljoin
 
 import requests
 from bs4 import BeautifulSoup
@@ -34,6 +37,8 @@ _host_cooldowns: Dict[str, float] = {}
 REQUEST_DELAY_BASE = 4.0
 REQUEST_DELAY_JITTER = 1.75
 BLOCK_COOLDOWN_SECONDS = 15 * 60
+
+}
 
 SEARCH_URLS = {
     "kabum": "https://www.kabum.com.br/busca/{query}?page_number={page}",
@@ -69,6 +74,10 @@ def direct_scrape_site(url: str) -> Optional[str]:
         if response.status_code in (403, 429):
             _host_cooldowns[host] = time.time() + BLOCK_COOLDOWN_SECONDS
             logger.warning("Host %s bloqueou (%s). Cooldown aplicado.", host, response.status_code)
+    try:
+        response = requests.get(url, headers=DEFAULT_HEADERS, timeout=30)
+        if response.status_code == 200 and response.text:
+            return response.text
         logger.debug("Falha em %s: status=%s", url, response.status_code)
         return None
     except Exception as exc:
@@ -225,6 +234,80 @@ def extract_products_from_json_ld(html: str, product_type: str) -> List[Dict]:
     return unique
 
 
+    for script in soup.select('script[type="application/ld+json"]'):
+        raw = script.string or script.get_text(strip=True)
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except Exception:
+            continue
+
+        nodes = payload if isinstance(payload, list) else [payload]
+        for node in nodes:
+            if not isinstance(node, dict):
+                continue
+
+            entries = []
+            if node.get("@type") == "ItemList":
+                entries = node.get("itemListElement") or []
+            elif node.get("@type") == "Product":
+                entries = [node]
+
+            for entry in entries:
+                item = entry.get("item") if isinstance(entry, dict) else None
+                obj = item if isinstance(item, dict) else entry
+                if not isinstance(obj, dict):
+                    continue
+
+                if obj.get("@type") != "Product":
+                    continue
+
+                name = (obj.get("name") or "").strip()
+
+                offers = obj.get("offers") or {}
+                if isinstance(offers, list):
+                    offers = offers[0] if offers else {}
+
+                url = (obj.get("url") or (offers.get("url") if isinstance(offers, dict) else "") or "").strip()
+
+                price_raw = None
+                old_raw = None
+                if isinstance(offers, dict):
+                    price_raw = offers.get("price")
+                    old_raw = offers.get("highPrice") or offers.get("priceSpecification", {}).get("price")
+
+                price = extract_price_from_text(str(price_raw)) if price_raw is not None else None
+                if price is None and isinstance(price_raw, (int, float)):
+                    price = float(price_raw)
+
+                old_price = extract_price_from_text(str(old_raw)) if old_raw is not None else None
+                if old_price is None and isinstance(old_raw, (int, float)):
+                    old_price = float(old_raw)
+
+                if not name or not url or price is None or price <= 0:
+                    continue
+
+                products.append(
+                    {
+                        "name": name,
+                        "url": url,
+                        "price": price,
+                        "old_price": old_price,
+                        "product_type": product_type,
+                    }
+                )
+
+    unique = []
+    seen = set()
+    for product in products:
+        if product["url"] in seen:
+            continue
+        seen.add(product["url"])
+        unique.append(product)
+    return unique
+
+
 def extract_products_from_html(html: str, product_type: str, site: str, base_url: str = "") -> List[Dict]:
     if not html:
         return []
@@ -245,6 +328,10 @@ def extract_products_from_html(html: str, product_type: str, site: str, base_url
     if not products:
         products = extract_products_from_json_ld(html, product_type)
 
+
+    if not products:
+        products = extract_products_from_json_ld(html, product_type)
+
     unique: List[Dict] = []
     seen_urls = set()
     for product in products:
@@ -259,14 +346,15 @@ def parse_woocommerce_minor_units(value: Optional[str], minor_unit: int = 2) -> 
     if value is None:
         return None
 
-    digits = re.sub(r"\D", "", str(value))
-    if not digits:
-        return None
 
-    try:
-        amount = int(digits)
-    except ValueError:
+def build_search_url(site: str, query: str, page: int) -> Optional[str]:
+    template = SEARCH_URLS.get(site)
+    if not template:
         return None
+    if site == "mercadolivre":
+        offset = (page - 1) * 50 + 1
+        return template.format(query=query, offset=offset)
+    return template.format(query=query, page=page)
 
     return amount / (10 ** max(minor_unit, 0))
 
@@ -384,5 +472,50 @@ def scrape_site_catalog(site: str, product_type: str, max_pages: int = 20) -> Li
 
     if not all_products:
         logger.warning("Nenhum produto coletado para %s/%s (possível bloqueio anti-bot)", site, product_type)
+
+    if not all_products:
+        logger.warning("Nenhum produto coletado para %s/%s (possível bloqueio anti-bot)", site, product_type)
+
+        empty_streak = 0
+        for product in page_products:
+            if product["url"] in seen_urls:
+                continue
+            seen_urls.add(product["url"])
+            all_products.append(product)
+
+    if not all_products:
+        logger.warning("Nenhum produto coletado para %s/%s (possível bloqueio anti-bot)", site, product_type)
+
+def scrape_site_catalog(site: str, product_type: str, max_pages: int = 20) -> List[Dict]:
+    query = product_type.replace("-", " ")
+    all_products: List[Dict] = []
+    seen_urls = set()
+    empty_streak = 0
+
+    for page in range(1, max_pages + 1):
+        url = build_search_url(site, query, page)
+        if not url:
+            break
+
+        html = direct_scrape_site(url)
+        if not html:
+            empty_streak += 1
+            if empty_streak >= 3:
+                break
+            continue
+
+        page_products = extract_products_from_html(html, product_type, site=site, base_url=url)
+        if not page_products:
+            empty_streak += 1
+            if empty_streak >= 3:
+                break
+            continue
+
+        empty_streak = 0
+        for product in page_products:
+            if product["url"] in seen_urls:
+                continue
+            seen_urls.add(product["url"])
+            all_products.append(product)
 
     return all_products
