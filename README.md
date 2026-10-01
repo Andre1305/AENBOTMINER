@@ -1,56 +1,53 @@
-# AENBOTMINER
+# AEN Bathymetry
 
-Bot de monitoramento de preços 24/7 para detectar possíveis **bugs de preço** e enviar alerta no Telegram imediatamente.
+Pipeline Python para transformar registros de GPS/sonar em produtos batimétricos.
+O projeto é focado exclusivamente em ingestão, processamento, sonograma e
+exportação cartográfica.
 
-## O que este script faz
+## Recursos disponíveis
 
-- Escaneia KaBuM, Pichau, Terabyte e Mercado Livre por tipo de produto.
-- Visita múltiplas páginas de busca por site (`MAX_PAGES_PER_SITE`).
-- Detecta bug de preço por **2 critérios**:
-  1. **Desconto no próprio site** (`old_price` vs `price` quando disponível).
-  2. **Histórico no banco SQLite** (queda forte comparada à média anterior).
-- Envia mensagem no Telegram assim que encontra um bug (não espera o ciclo terminar).
-- Envia notificação de “bot iniciado” apenas na primeira execução.
-- Alguns sites podem bloquear scraping por anti-bot em determinados horários/IPs; nesses casos o bot registra aviso e continua nos demais sites.
+- parser NMEA 0183 para posição (`GGA`) e profundidade (`DPT`/`DBT`);
+- validação de checksum e conversão de latitude/longitude;
+- sincronização temporal por interpolação linear;
+- limpeza de spikes por filtro de mediana;
+- superfície interpolada por IDW;
+- isolinhas por Marching Squares;
+- waterfall RGB com ganho, contraste e paleta configurável;
+- exportação de pontos para GeoJSON, GPX e KML.
 
-## Configuração (.env)
+> O formato Humminbird `.DAT`/`.SON` varia entre modelos e versões. Um parser
+> binário só deve ser incluído depois de definir o equipamento e obter arquivos
+> reais para validar offsets, escala, endianness e timestamps.
 
-```env
-SERP_API_KEY=caaec3c97fc463d1fa94c8bd641c9139ab61ed4693ea98ac188fe43c64213e41
-TELEGRAM_BOT_TOKEN=7957463898:AAF7OAujnKjeRxYrY6eY4sH6X_X2zq2-Nzw
-TELEGRAM_CHAT_ID=6834775938
-SERP_API_KEY=xxx-xxx
-TELEGRAM_BOT_TOKEN=xxx-xxx
-TELEGRAM_CHAT_ID=xxx-xxx
-SCAN_INTERVAL_SECONDS=600
-MIN_HISTORY_FOR_ALERT=5
-BUG_DROP_ALERT=0.50
-ALERT_COOLDOWN_HOURS=12
-MAX_PAGES_PER_SITE=30
-```
+## Executar os testes
 
-> A API está desativada por padrão no código (`SKIP_SERP_API = True`).
-
-## Rodar no Windows 10 (24/7)
-
-1. Instale Python 3.10+.
-2. No CMD/PowerShell dentro da pasta do projeto:
+Requer Python 3.10 ou mais recente. Nenhuma dependência é necessária em runtime.
 
 ```bash
-pip install requests beautifulsoup4 python-decouple
-python pricebot_com_serp_api_corrigido.py
+python -m pip install -e '.[dev]'
+python -m pytest -v
 ```
 
-3. Para deixar 24/7, use o **Agendador de Tarefas**:
-   - Criar tarefa → “Executar se o usuário estiver conectado ou não”.
-   - Gatilho: “Ao iniciar o computador”.
-   - Ação:
-     - Programa: `python`
-     - Argumentos: `pricebot_com_serp_api_corrigido.py`
-     - Iniciar em: pasta do projeto.
-   - Marque “Reiniciar se falhar”.
+Também é possível testar o fluxo completo com o registro de exemplo:
 
-## Arquivos
+```bash
+python -m bathymetry examples/sample.nmea --output build/sample --grid-size 25
+```
 
-- `pricebot_com_serp_api_corrigido.py` → loop principal, banco e alertas.
-- `scraper_requests_final_corrigido.py` → scraping paginado e extração de preços.
+O comando cria `build/sample.geojson`, `build/sample.gpx`, `build/sample.kml` e
+`build/sample-grid.json`. O último arquivo contém os eixos, a grade IDW e os
+segmentos das isolinhas e pode ser aberto diretamente para inspeção.
+
+## Uso como biblioteca
+
+```python
+from bathymetry import idw_grid, median_filter_depths, parse_nmea, synchronize
+
+positions, depths = parse_nmea("levantamento.nmea")
+soundings = median_filter_depths(synchronize(positions, depths), window=3)
+xs, ys, grid = idw_grid(soundings, width=250, height=250)
+```
+
+As coordenadas da grade são longitude/latitude em WGS 84. Para levantamentos de
+engenharia, reprojete os pontos para um CRS métrico adequado antes de interpolar;
+IDW sobre graus não representa distâncias uniformes em áreas extensas.
