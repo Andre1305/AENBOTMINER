@@ -12,6 +12,10 @@ def synchronize(positions: list[PositionFix], depths: list[DepthSample]) -> list
     stamps = [item.timestamp for item in fixes]
     result = []
     for sample in sorted(depths, key=lambda item: item.timestamp):
+        if sample.timestamp == stamps[-1]:
+            last = fixes[-1]
+            result.append(Sounding(sample.timestamp, last.latitude, last.longitude, sample.depth))
+            continue
         right = bisect_right(stamps, sample.timestamp)
         if right == 0 or right == len(fixes):
             continue

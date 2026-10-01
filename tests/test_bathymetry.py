@@ -9,6 +9,7 @@ from bathymetry.nmea import NMEAParser
 from bathymetry.processing import idw_grid, marching_squares, median_filter_depths
 from bathymetry.sonogram import render_waterfall
 from bathymetry.sync import synchronize
+from bathymetry.__main__ import build_parser, run
 
 
 def test_parses_gga_and_dpt():
@@ -31,6 +32,13 @@ def test_temporal_interpolation():
     assert (result[0].latitude, result[0].longitude) == (5, 10)
 
 
+def test_temporal_interpolation_includes_final_fix():
+    start = datetime(2024, 1, 1, tzinfo=timezone.utc)
+    fixes = [PositionFix(start, 0, 0), PositionFix(start + timedelta(seconds=10), 10, 20)]
+    result = synchronize(fixes, [DepthSample(start + timedelta(seconds=10), 3)])
+    assert (result[0].latitude, result[0].longitude) == (10, 20)
+
+
 def test_processing_pipeline():
     now = datetime.now(timezone.utc)
     samples = [Sounding(now, 0, i, depth) for i, depth in enumerate([10, 100, 10])]
@@ -47,3 +55,15 @@ def test_waterfall_and_geojson(tmp_path):
     sample = Sounding(datetime.now(timezone.utc), -22, -43, 7.5)
     path = export_geojson([sample], tmp_path / "depth.geojson")
     assert json.loads(path.read_text())["features"][0]["properties"]["depth"] == 7.5
+
+
+def test_example_cli_pipeline(tmp_path):
+    args = build_parser().parse_args([
+        "examples/sample.nmea", "--output", str(tmp_path / "survey"), "--grid-size", "5"
+    ])
+    summary = run(args)
+    assert summary == {"positions": 4, "depths": 4, "soundings": 4}
+    for suffix in (".geojson", ".gpx", ".kml"):
+        assert (tmp_path / f"survey{suffix}").is_file()
+    grid = json.loads((tmp_path / "survey-grid.json").read_text())
+    assert len(grid["depth"]) == 5
