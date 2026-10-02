@@ -1,0 +1,20 @@
+{
+  "latest": "4.2-beta.2",
+  "versions": [
+    {
+      "version": "4.0-test.1",
+      "folder": "outputs/SonarStudio-v4-teste",
+      "tag": "sonarstudio-v4.0-test.1"
+    },
+    {
+      "version": "4.1-test.1",
+      "folder": "outputs/SonarStudio-v41-teste",
+      "tag": "sonarstudio-v4.1-test.1"
+    },
+    {
+      "version": "4.2-beta.2",
+      "folder": "outputs/SonarStudio-v42-beta",
+      "tag": "sonarstudio-v4.2-beta.2"
+    }
+  ]
+}

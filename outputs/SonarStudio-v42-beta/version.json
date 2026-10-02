@@ -1,0 +1,6 @@
+{
+  "version": "4.2-beta.2",
+  "local_validation_tests": 58,
+  "needs_user_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false
+}

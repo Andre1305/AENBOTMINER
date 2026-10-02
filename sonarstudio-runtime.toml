@@ -1,0 +1,29 @@
+[workspace]
+name = "sonarstudio-runtime"
+channels = ["conda-forge"]
+platforms = ["win-64"]
+
+[dependencies]
+python = "3.12.*"
+gdal = "3.10.*"
+numpy = "2.2.*"
+pandas = "2.3.*"
+scipy = "1.16.*"
+rasterio = "1.4.*"
+pyproj = "3.7.*"
+scikit-image = "0.25.*"
+scikit-learn = "1.8.*"
+matplotlib = "3.10.*"
+geopandas = "1.1.*"
+shapely = ">=2,<3"
+h5py = ">=3.15,<4"
+pillow = ">=11.3,<12"
+joblib = ">=1.5,<2"
+tqdm = ">=4.67,<5"
+pip = ">=25"
+
+[pypi-dependencies]
+pingmapper = { url = "https://github.com/CameronBodine/PINGMapper/archive/98a0acd103d15be58f0614a64193aa7756adc886.zip" }
+pingverter = "==2.1.0"
+pyside6 = "==6.11.0"
+onnxruntime = "==1.30.0"
