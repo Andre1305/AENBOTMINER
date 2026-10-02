@@ -1,0 +1,19 @@
+{
+  "repo": "Dinoman1221/sonarvision-yolov8-esi-v6",
+  "revision": "be0ab3954df54fa677449eaee5a7defdcfeae917",
+  "license": "Apache-2.0 (declared by model author)",
+  "downloads": [
+    {
+      "file": "weights.onnx",
+      "url": "https://huggingface.co/Dinoman1221/sonarvision-yolov8-esi-v6/resolve/be0ab3954df54fa677449eaee5a7defdcfeae917/yolo_esi_v6_fp32.onnx",
+      "sha256": "33a620674479e6251a3fb487e2b6a47dca777e3d3dd51d49c77fec6b2043ba72",
+      "bytes": 12241743
+    },
+    {
+      "file": "README.md",
+      "url": "https://huggingface.co/Dinoman1221/sonarvision-yolov8-esi-v6/resolve/be0ab3954df54fa677449eaee5a7defdcfeae917/README.md",
+      "sha256": "3a506b06f6395324f7306d6efd8e9b8c15572ee59a88e52d2bb27cb065380bbc",
+      "bytes": 8874
+    }
+  ]
+}
