@@ -1,0 +1,8 @@
+{
+  "version": "4.4-test.1",
+  "local_validation_tests": 74,
+  "requires_private_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false,
+  "features": "Correção de picos isolados de alcance; cascata reversível sem trocar os lados.",
+  "private_documents_or_keys_distributed": false
+}

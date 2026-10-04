@@ -1,0 +1,8 @@
+{
+  "version": "4.5-MAX",
+  "local_validation_tests": 98,
+  "requires_private_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false,
+  "features": "Alinhamento relativo por sobreposição; tabela de maré; dataset YOLO e fine-tuning local.",
+  "private_documents_or_keys_distributed": false
+}

@@ -1,6 +1,6 @@
 # SonarStudio e AEN Bathymetry
 
-SonarStudio **4.2-beta.2**: aplicativo Windows para arquivos Humminbird DAT/SON, Sonar Viewer, mosaicos SideScan, batimetria TIN e triagem local por modelos específicos de sonar.
+SonarStudio **4.7-Pro-Analysis-test.1**: aplicativo Windows para arquivos Humminbird DAT/SON, Sonar Viewer, mosaicos SideScan, batimetria TIN e triagem local por modelos específicos de sonar.
 
 **[Baixar versões de teste](https://github.com/Andre1305/AENBOTMINER/releases)** · [Guia do SonarStudio](docs/SONARSTUDIO.md)
 
@@ -9,7 +9,7 @@ SonarStudio **4.2-beta.2**: aplicativo Windows para arquivos Humminbird DAT/SON,
 1. Baixe o ZIP da versão nas Releases e extraia mantendo a estrutura de pastas.
 2. Instale [Pixi](https://pixi.sh) pelo site oficial ou `winget install prefix-dev.pixi`.
 3. Execute `./Instalar-SonarStudio.ps1` no PowerShell. Precisa de internet para instalar as dependências. Para uma versão antiga: `./Instalar-SonarStudio.ps1 -Version 4.1-test.1`.
-4. Abra `outputs/SonarStudio-v42-beta/SonarStudio.exe` (ou a pasta correspondente à versão escolhida).
+4. Abra `outputs/SonarStudio-v47-Pro-Analysis-test1/SonarStudio.exe` (ou a pasta correspondente à versão escolhida).
 
 O ZIP contém modelos e launcher, mas **não contém Python/GDAL instalados**. O script cria o runtime esperado em `work/PINGMapper-main/.pixi/envs/default`. O instalador foi acrescentado para distribuição e requer validação de instalação limpa; o runtime local anterior já foi usado nos testes de integração.
 
@@ -26,6 +26,18 @@ Para novas gravações, extraia o RAR com 7-Zip/WinRAR e mantenha o DAT ao lado 
 Os snapshots ficam em `outputs/SonarStudio-v4-teste`, `outputs/SonarStudio-v41-teste` e `outputs/SonarStudio-v42-beta`. Releases são reconstruídas desses snapshots e possuem SHA-256. O CI testa o pipeline NMEA público; testes de integração do GUI exigem gravações locais, que não são públicas.
 
 A IA produz **candidatos para revisão**. Não foi aferida precisão da classificação em um conjunto de alvos anotados. Resolução de amostragem não é precisão de GPS; a batimetria não tem datum vertical aferido. Não há equivalência profissional certificada ao ReefMaster/SonarWiz.
+
+## Atualizações 4.3–4.7
+
+- **4.3-test.1**: Filtro de profundidade do mosaico; somente modelos especializados em sonar.
+- **4.4-test.1**: Correção de picos isolados de alcance; cascata reversível sem trocar os lados.
+- **4.5-test.1**: Triagem automática, feedback de candidatos e mapa de scores.
+- **4.5-MAX**: Alinhamento relativo por sobreposição; tabela de maré; dataset YOLO e fine-tuning local.
+- **4.6-Viewer-test.1**: Leitura assíncrona, sincronização de canais, régua e sombra com hipóteses, cache de IA.
+- **4.6-Viewer-test.2**: Zoom vertical independente, janela até 3000 pings, rolagem virtual e Overview.
+- **4.7-Pro-Analysis-test.1**: Legado de alta fidelidade, lupa nativa DN/dB digitais relativos, fichas privadas de alvo e correções do cache.
+
+[Notas de cada versão](docs/releases). A versão 4.7 restaura a ordem e quantização do processamento legado, preserva a navegação vertical e acrescenta a lupa nativa e fichas pessoais protegidas. As fichas exigem a chave DPAPI local e runtime de PDF do proprietário, ausentes dos pacotes públicos.
 
 ## Pipeline NMEA original
 

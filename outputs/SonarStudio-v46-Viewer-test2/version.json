@@ -1,0 +1,8 @@
+{
+  "version": "4.6-Viewer-test.2",
+  "local_validation_tests": 115,
+  "requires_private_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false,
+  "features": "Zoom vertical independente, janela até 3000 pings, rolagem virtual e Overview.",
+  "private_documents_or_keys_distributed": false
+}

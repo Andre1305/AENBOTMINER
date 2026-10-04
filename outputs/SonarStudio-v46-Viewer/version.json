@@ -1,0 +1,8 @@
+{
+  "version": "4.6-Viewer-test.1",
+  "local_validation_tests": 112,
+  "requires_private_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false,
+  "features": "Leitura assíncrona, sincronização de canais, régua e sombra com hipóteses, cache de IA.",
+  "private_documents_or_keys_distributed": false
+}
