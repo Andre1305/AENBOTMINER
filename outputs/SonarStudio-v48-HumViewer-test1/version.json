@@ -1,0 +1,14 @@
+{
+  "version": "4.8-HumViewer-test.1",
+  "created_utc": "2026-10-04T14:26:14.963527+00:00",
+  "test_count": 128,
+  "focused_tests": 4,
+  "runtime": "shared local Python ../../work/PINGMapper-main/.pixi/envs/default",
+  "standalone": false,
+  "ai": "SonarVision v6 four-class sonar model; covo UI disabled; XPLORE accuracy not certified",
+  "viewer": "one/two/three timestamp-synchronized panels; reverse transport; time seek; visual grid; custom palette; units; shadow/ruler/overview retained",
+  "video": "bounded-memory AVI/MJPEG visual preview; 10fps; fixed frame dimensions; original samples unchanged",
+  "humviewer_parity": "partial; details in release notes",
+  "private_documents_included": false,
+  "user_recordings_or_keys_included": false
+}
