@@ -1,5 +1,5 @@
 {
-  "latest": "4.2-beta.2",
+  "latest": "4.7-Pro-Analysis-test.1",
   "versions": [
     {
       "version": "4.0-test.1",
@@ -15,6 +15,48 @@
       "version": "4.2-beta.2",
       "folder": "outputs/SonarStudio-v42-beta",
       "tag": "sonarstudio-v4.2-beta.2"
+    },
+    {
+      "version": "4.3-test.1",
+      "folder": "outputs/SonarStudio-v43-teste",
+      "tag": "sonarstudio-v4.3-test.1",
+      "notes_file": "docs/releases/4.3-test.1.md"
+    },
+    {
+      "version": "4.4-test.1",
+      "folder": "outputs/SonarStudio-v44-teste",
+      "tag": "sonarstudio-v4.4-test.1",
+      "notes_file": "docs/releases/4.4-test.1.md"
+    },
+    {
+      "version": "4.5-test.1",
+      "folder": "outputs/SonarStudio-v45-teste",
+      "tag": "sonarstudio-v4.5-test.1",
+      "notes_file": "docs/releases/4.5-test.1.md"
+    },
+    {
+      "version": "4.5-MAX",
+      "folder": "outputs/SonarStudio-v45-MAX",
+      "tag": "sonarstudio-v4.5-MAX",
+      "notes_file": "docs/releases/4.5-MAX.md"
+    },
+    {
+      "version": "4.6-Viewer-test.1",
+      "folder": "outputs/SonarStudio-v46-Viewer",
+      "tag": "sonarstudio-v4.6-Viewer-test.1",
+      "notes_file": "docs/releases/4.6-Viewer-test.1.md"
+    },
+    {
+      "version": "4.6-Viewer-test.2",
+      "folder": "outputs/SonarStudio-v46-Viewer-test2",
+      "tag": "sonarstudio-v4.6-Viewer-test.2",
+      "notes_file": "docs/releases/4.6-Viewer-test.2.md"
+    },
+    {
+      "version": "4.7-Pro-Analysis-test.1",
+      "folder": "outputs/SonarStudio-v47-Pro-Analysis-test1",
+      "tag": "sonarstudio-v4.7-Pro-Analysis-test.1",
+      "notes_file": "docs/releases/4.7-Pro-Analysis-test.1.md"
     }
   ]
 }

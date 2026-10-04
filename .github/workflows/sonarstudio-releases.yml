@@ -46,7 +46,9 @@ jobs:
             $zip = "dist/SonarStudio-$($version.version)-windows.zip"
             gh release view $tag --repo $env:GITHUB_REPOSITORY *> $null
             if ($LASTEXITCODE -ne 0) {
-              gh release create $tag $zip "$zip.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title "SonarStudio $($version.version)" --notes "Versão experimental. Inclui código, launcher Windows, modelos específicos de sonar e instalador de dependências via Pixi. Não inclui ambiente Python nem gravações privadas. Veja README e docs/SONARSTUDIO.md. Validação local: Rec00001/Rec00002; candidatos IA exigem revisão."
+              $noteFile = $version.notes_file
+              if (-not $noteFile) { $noteFile = "docs/releases/default.md" }
+              gh release create $tag $zip "$zip.sha256" --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --prerelease --title "SonarStudio $($version.version)" --notes-file $noteFile
             } else {
               Write-Output "Release existente preservada: $tag"
             }

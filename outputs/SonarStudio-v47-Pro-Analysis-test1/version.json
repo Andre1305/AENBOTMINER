@@ -1,0 +1,8 @@
+{
+  "version": "4.7-Pro-Analysis-test.1",
+  "local_validation_tests": 124,
+  "requires_private_recordings_for_integration_tests": true,
+  "raw_recordings_distributed": false,
+  "features": "Legado de alta fidelidade, lupa nativa DN/dB digitais relativos, fichas privadas de alvo e correções do cache.",
+  "private_documents_or_keys_distributed": false
+}
