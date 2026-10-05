@@ -2,7 +2,7 @@
 
 SonarStudio **4.9-Hybrid-beta.4**: aplicativo Windows para arquivos Humminbird DAT/SON, Sonar Viewer, mosaicos SideScan, batimetria TIN e triagem local por modelos específicos de sonar.
 
-**[Baixar versões de teste](https://github.com/Andre1305/AENBOTMINER/releases)** · [Guia do SonarStudio](docs/SONARSTUDIO.md)
+**[Baixar versões de teste](https://github.com/Andre1305/SonarStudio/releases)** · [Guia do SonarStudio](docs/SONARSTUDIO.md)
 
 ## Instalação Windows
 
