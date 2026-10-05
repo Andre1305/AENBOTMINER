@@ -28,6 +28,7 @@ jobs:
           foreach ($version in $versions.versions) {
             & $csc /nologo /target:winexe /reference:System.Windows.Forms.dll ("/out:"+(Join-Path $version.folder 'SonarStudio.exe')) (Join-Path $version.folder 'Launcher.cs')
             if ($LASTEXITCODE -ne 0) { throw 'Launcher build failed' }
+            if ($version.version -like '4.9-*') { Copy-Item (Join-Path $version.folder 'SonarStudio.exe') (Join-Path $version.folder 'SonarStudio-Legado.exe') }
           }
       - name: Validate source and package exact sonar models
         run: python tools/build_releases.py

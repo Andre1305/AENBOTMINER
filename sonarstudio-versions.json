@@ -1,5 +1,5 @@
 {
-  "latest": "4.8-HumViewer-test.1",
+  "latest": "4.9-Hybrid-beta.4",
   "versions": [
     {
       "version": "4.0-test.1",
@@ -63,6 +63,12 @@
       "folder": "outputs/SonarStudio-v48-HumViewer-test1",
       "tag": "sonarstudio-v4.8-HumViewer-test.1",
       "notes_file": "docs/releases/4.8-HumViewer-test.1.md"
+    },
+    {
+      "version": "4.9-Hybrid-beta.4",
+      "folder": "outputs/SonarStudio-v49-Hybrid-beta4",
+      "tag": "sonarstudio-v4.9-Hybrid-beta.4",
+      "notes_file": "docs/releases/4.9-Hybrid-beta.4.md"
     }
   ]
 }
